@@ -1,4 +1,4 @@
-// ht.h - v1.0.0 - Public Domain - Hash Table in C
+// ht.h - v1.0.1 - Public Domain - Hash Table in C
 //
 // # STB-style Single Header Library
 //
@@ -48,9 +48,9 @@
 // # Performance
 //
 // Don't expect the state of the art performance out of this Hash Table. It's just a basic Hash Table with Open Addressing and
-// Quadratic Probing. But it is a Hash Table. All the operations are O(1) amortized as you would expect. I use it in my projects
-// it works reasonably fast for a Hash Table. The goal of this library was to have a nice Generic Hash Table API in pure C.
-// We may improve the performance later if needed.
+// Quadratic Probing. But it is a Hash Table. All the operations are O(1) amortized as you would expect (except maybe
+// ht_reset()). I use it in my projects and it works reasonably fast for a Hash Table. The goal of this library was to have a
+// nice Generic Hash Table API in pure C. We may improve the performance later if needed.
 #ifndef HT_H_
 #define HT_H_
 
@@ -90,10 +90,9 @@
          * Do not access any impl_* fields if you just need      \
          * to iterate the Table. Use ht_foreach() instead.       \
          */                                                      \
-        void       *impl_slots;                                  \
+        Key        *impl_key_ptr;                                \
         size_t      impl_filled_slots;                           \
         size_t      impl_capacity;                               \
-        Key        *impl_key_ptr;                                \
         /* .default_value - ht_put() and friends will use        \
          * .default_value as the default value for all the newly \
          * inserted values. Leave it empty for zero-initialized  \
@@ -192,7 +191,7 @@ HT_PUBDEF uintptr_t ht_sv_hasheq(Ht_Op op, void const *a, void const *b, size_t 
 // Value *ht_put(Ht(Key, Value) *ht, Key key)
 //
 // Inserts the key with the value initialized with ht->default_value.
-// Returns the pointer to the inserted value.
+// Returns the pointer to the inserted value. Operation is O(1) amortized.
 //
 // ```c
 // #define HT_IMPLEMENTATION
@@ -223,7 +222,7 @@ HT_PUBDEF uintptr_t ht_sv_hasheq(Ht_Op op, void const *a, void const *b, size_t 
 // Value *ht_find(Ht(Key, Value) *ht, Key key)
 //
 // Tries to find a value by the key. If the value is found returns the pointer to the value,
-// otherwise returns NULL.
+// otherwise returns NULL. Operation is O(1) amortized.
 //
 // ```c
 // #define HT_IMPLEMENTATION
@@ -259,7 +258,8 @@ HT_PUBDEF uintptr_t ht_sv_hasheq(Ht_Op op, void const *a, void const *b, size_t 
 // Value *ht_find_or_put(Ht(Key, Value) *ht, Key key)
 //
 // Tries to find a value by the key, if not found inserts the key with the value initialized as ht->default_value.
-// Never fails. Always returns either the pointer to the found value or the newly added value.
+// Never fails. Always returns either the pointer to the found value or the newly added value. Operation is O(1)
+// amortized.
 //
 // ```c
 // #define HT_IMPLEMENTATION
@@ -292,7 +292,7 @@ HT_PUBDEF uintptr_t ht_sv_hasheq(Ht_Op op, void const *a, void const *b, size_t 
 //
 // Delete the element by the pointer to its value slot. You can
 // get the value pointer via ht_find() or ht_foreach(). NULL is
-// a valid value pointer and will be simply ignored.
+// a valid value pointer and will be simply ignored. Operation is O(1).
 //
 // ```c
 // #include <stdio.h>
@@ -318,7 +318,7 @@ HT_PUBDEF uintptr_t ht_sv_hasheq(Ht_Op op, void const *a, void const *b, size_t 
 //
 // Combines together ht_find() and ht_delete() enabling you to delete the elements
 // by the keys. Returns true when the element was deleted, returns false when the
-// element doesn’t exist
+// element doesn’t exist. Operation is O(1) amortized.
 //
 // ```c
 // #include <stdio.h>
@@ -350,7 +350,8 @@ HT_PUBDEF uintptr_t ht_sv_hasheq(Ht_Op op, void const *a, void const *b, size_t 
 
 // Key ht_key(Ht(Key, Value) *ht, Value *value)
 //
-// Returns the key of the element by its value pointer. Useful in conjunction with ht_foreach()
+// Returns the key of the element by its value pointer. Useful in conjunction with ht_foreach().
+// Operation is O(1).
 #define ht_key(ht, value_) \
     (*(ht__typeof((ht)->impl_key_ptr))ht__key(value_, ht__layout(ht)))
 
@@ -377,17 +378,15 @@ HT_PUBDEF uintptr_t ht_sv_hasheq(Ht_Op op, void const *a, void const *b, size_t 
 // void ht_reset(Ht(Key, Value) *ht)
 //
 // Removes all the elements from the hash table, but does not deallocate any memory, making the hash table
-// ready to be reused again.
+// ready to be reused again. Operation is O(capacity) if ht->count > 0. When ht->count == 0 it's O(1).
 #define ht_reset(ht) ht__reset((Ht__Abstract*)(ht), ht__layout(ht))
 
 // void ht_free(Ht(Key, Value) *ht)
 //
 // Deallocates all the memory associated with the hash table and completely resets its state.
+// Operation should be O(1) but it calls to HT_FREE() to free the allocated buffers. So include
+// that into your estimates.
 #define ht_free(ht) ht__free((Ht__Abstract*)(ht))
-
-#ifdef HT_INIT_CAP
-#error "HT_INIT_CAP was made private (renamed to HT__MIN_CAP). You can't redefine it anymore."
-#endif // HT_INIT_CAP
 
 // The default hash function. It's the hash function that is used by default
 // throughout the library if your .hasheq is set to NULL. You can redefine it.
@@ -474,7 +473,6 @@ typedef struct {
     void       *impl_slots;
     size_t      impl_filled_slots;
     size_t      impl_capacity;
-    void       *impl_key_ptr;
     uint8_t     default_value;
 } Ht__Abstract;
 
@@ -661,7 +659,7 @@ HT_PUBDEF uintptr_t ht_djb2_hash(void const *data, size_t size)
     const uint8_t *bytes = (const uint8_t *)data;
     uintptr_t hash = 5381u;
     for (size_t i = 0; i < size; ++i) {
-        hash += ((hash << 5) + hash) + (uintptr_t)bytes[i];
+        hash = ((hash << 5) + hash) + (uintptr_t)bytes[i];
     }
     return hash;
 }
@@ -780,12 +778,13 @@ static void ht__expand(Ht__Abstract *ht, Ht__Layout l)
         uint8_t *old_impl_slots    = (uint8_t*)ht->impl_slots;
 
         ht->impl_capacity = 1;
-        while (ht->impl_capacity < HT__MIN_CAP) {
+        while (ht->impl_capacity && ht->impl_capacity < HT__MIN_CAP) {
             ht->impl_capacity <<= 1;
         }
-        while (ht->count*100 >= HT__LOAD_FACTOR_PERCENT*ht->impl_capacity) {
+        while (ht->impl_capacity && ht->count*100 >= HT__LOAD_FACTOR_PERCENT*ht->impl_capacity) {
             ht->impl_capacity <<= 1;
         }
+        HT_ASSERT(ht->impl_capacity);
         ht->impl_filled_slots = 0;
         ht->count             = 0;
         ht->impl_slots        = HT_MALLOC(ht->impl_capacity*ht__slot_size(l));
@@ -846,6 +845,9 @@ static int ht__memcmp(const void *vl, const void *vr, size_t n)
 /*
    Revision history:
 
+      1.0.1 (2026-04-08) - Compress the internal representation of Ht by 1 machine word.
+                         - Fix potential infinite loop in ht__expand when the size of the table reaches the limit of the machine word.
+                         - Fix DJB2 implementation
       1.0.0 (2026-04-06) First release
                          - Initial implementation by @rexim
                          - Docs proofreading by @nashiora
