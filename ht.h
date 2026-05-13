@@ -1,4 +1,4 @@
-// ht.h - v1.0.1 - Public Domain - Hash Table in C
+// ht.h - v1.1.0 - Public Domain - Hash Table in C
 //
 // # STB-style Single Header Library
 //
@@ -34,7 +34,7 @@
 // have a pure C compiler. You should still be able to compile your code. The minimal supported standard is C++20
 // since we make use of designated initializers.
 //
-// Any other C++ related case is outside of the scope of this library. Using ht.h from C++ code is definetely not
+// Any other C++ related case is outside of the scope of this library. Using ht.h from C++ code is definitely not
 // supported, and all the unexpected side effects are fully on you. For example ht.h expects the keys to be Trivially
 // Copyable [https://en.cppreference.com/w/cpp/named_req/TriviallyCopyable.html] so be careful with that. Besides,
 // if you are using C++ you probably don't even need this library. Just use std::unordered_map or whatever.
@@ -375,6 +375,33 @@ HT_PUBDEF uintptr_t ht_sv_hasheq(Ht_Op op, void const *a, void const *b, size_t 
     for (ht__typeof((ht)->default_value)* iter = NULL; \
          ht__next((Ht__Abstract*)(ht), (void **)&iter, ht__layout(ht));)
 
+// bool ht_next(Ht(Key, Value) *ht, Value **value)
+//
+// Finds the next value slot after the given one. Returns `true` when the next slot is found
+// and `false` when reached the end. When the slot pointer is NULL finds the first slot.
+// In case of returning `false` sets `value` to NULL. Can be used for iterating the hash table.
+//
+// ```c
+// #include <stdio.h>
+// #define HT_IMPLEMENTATION
+// #include "ht.h"
+//
+// int main(void)
+// {
+//     Ht(int, int) ht = {0};
+//     *ht_put(&ht, 69)   = 1;
+//     *ht_put(&ht, 420)  = 2;
+//     *ht_put(&ht, 1337) = 3;
+//     int *value = NULL;
+//     while (ht_next(&ht, &value)) {
+//         int key = ht_key(&ht, value);
+//         printf("%4d => %d\n", key, *value);
+//     }
+//     return 0;
+// }
+// ```
+#define ht_next(ht, value) ht__next((Ht__Abstract*)(ht), (void**)(value), ht__layout(ht))
+
 // void ht_reset(Ht(Key, Value) *ht)
 //
 // Removes all the elements from the hash table, but does not deallocate any memory, making the hash table
@@ -579,6 +606,11 @@ static void *ht__key(void *slot, Ht__Layout l)
 
 static bool ht__next(Ht__Abstract *ht, void **slot, Ht__Layout l)
 {
+    if (ht->impl_capacity == 0) {
+        *slot = NULL;
+        return false;
+    }
+
     uint8_t *slots_start = (uint8_t*)ht->impl_slots;
     uint8_t *slots_end   = slots_start + ht->impl_capacity*ht__slot_size(l);
     uint8_t *iter        = (uint8_t*)*slot;
@@ -592,13 +624,19 @@ static bool ht__next(Ht__Abstract *ht, void **slot, Ht__Layout l)
     while (iter < slots_end && *ht__slot_hash(iter, l) < HT__FIRST_VALID_HASH) {
         iter += ht__slot_size(l);
     }
-    *slot = iter;
-    return iter < slots_end;
+
+    if (iter < slots_end) {
+        *slot = iter;
+        return true;
+    } else {
+        *slot = NULL;
+        return false;
+    }
 }
 
 static void ht__reset(Ht__Abstract *ht, Ht__Layout l)
 {
-    if (ht->count == 0) return; // Since ht_reset() is O(capacity) do not do it if ht is already empty
+    if (ht->impl_filled_slots == 0) return; // Since ht_reset() is O(capacity) do not do it if ht is already empty
     uint8_t *slots_start = (uint8_t*)ht->impl_slots;
     uint8_t *slots_end = slots_start + ht->impl_capacity*ht__slot_size(l);
     for (uint8_t *iter = slots_start; iter < slots_end; iter += ht__slot_size(l)) {
@@ -845,6 +883,9 @@ static int ht__memcmp(const void *vl, const void *vr, size_t n)
 /*
    Revision history:
 
+      1.1.0 (2026-05-13) - Introduce ht_next()
+                         - Fix the bug where ht_reset() doesn't remove the tombstones when ht.count == 0 and ht.impl_filled_slots > 0.
+                           (reported by @Strawberry)
       1.0.1 (2026-04-08) - Compress the internal representation of Ht by 1 machine word.
                          - Fix potential infinite loop in ht__expand when the size of the table reaches the limit of the machine word.
                          - Fix DJB2 implementation
